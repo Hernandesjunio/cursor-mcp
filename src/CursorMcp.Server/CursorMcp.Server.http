@@ -1,0 +1,29 @@
+@https://localhost:7071
+
+GET {{Host}}/health
+
+###
+GET {{Host}}/.well-known/oauth-protected-resource
+
+###
+GET {{Host}}/.well-known/oauth-authorization-server
+
+###
+POST {{Host}}/mcp
+Accept: application/json, text/event-stream
+Content-Type: application/json
+MCP-Protocol-Version: 2026-07-28
+Mcp-Method: server/discover
+
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "server/discover",
+  "params": {
+    "_meta": {
+      "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+      "io.modelcontextprotocol/clientInfo": { "name": "http-file", "version": "1.0.0" },
+      "io.modelcontextprotocol/clientCapabilities": {}
+    }
+  }
+}

@@ -1,0 +1,131 @@
+# Cursor MCP Spike
+
+Servidor MCP HTTP **stateless** (`2026-07-28`) em **.NET 10**, servido em `https://localhost:7071`, com login local, challenge `WWW-Authenticate` e JWT.
+
+Este repositório é um spike de conectividade Cursor ↔ MCP. Credenciais, chave HMAC e armazenamento em memória **não são adequados para produção**.
+
+## O que está incluso
+
+- `POST /mcp` — Streamable HTTP MCP, sem sessão (`HttpServerSessionMode.Stateless`)
+- Tool `hello_world`
+- Resource `hello://world`
+- `401` + `WWW-Authenticate: Bearer resource_metadata="https://localhost:7071/.well-known/oauth-protected-resource"`
+- Authorization Server mínimo hospedado na própria app (`/authorize`, `/login`, `/token`, `/register`)
+- Scalar em `/scalar` para os endpoints HTTP auxiliares (OAuth/health). O endpoint MCP **não** é executável pelo Scalar.
+
+## Pré-requisitos
+
+- SDK .NET 10 (`10.0.301` ou compatível; ver `global.json`)
+- Certificado de desenvolvimento HTTPS confiável:
+
+```bash
+dotnet dev-certs https --trust
+```
+
+## Como rodar
+
+```bash
+dotnet run --project src/CursorMcp.Server --launch-profile https
+```
+
+URLs:
+
+| Recurso | URL |
+| --- | --- |
+| Home | https://localhost:7071/ |
+| Scalar | https://localhost:7071/scalar |
+| Health | https://localhost:7071/health |
+| MCP | https://localhost:7071/mcp |
+| Protected resource metadata | https://localhost:7071/.well-known/oauth-protected-resource |
+| Authorization server metadata | https://localhost:7071/.well-known/oauth-authorization-server |
+| Login | https://localhost:7071/login |
+
+## Conectar no Cursor
+
+1. Suba o servidor HTTPS.
+2. Confie no certificado de desenvolvimento.
+3. Cadastre o MCP remoto, por exemplo em `mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "cursor-mcp-spike": {
+      "url": "https://localhost:7071/mcp"
+    }
+  }
+}
+```
+
+4. O Cursor chama `POST /mcp` sem token e recebe `401` com `resource_metadata`.
+5. O Cursor abre `/authorize` → `/login`.
+6. Clique em **Entrar como demo-user**.
+7. A app redireciona para o callback do Cursor com `code` + `state`.
+8. O Cursor troca o code em `/token` e passa a enviar `Authorization: Bearer <JWT>`.
+9. Confirme a tool `hello_world` e o resource `hello://world`.
+
+Chamadas JSON-RPC manuais para `2026-07-28` precisam dos headers `MCP-Protocol-Version` e `Mcp-Method` (e `Mcp-Name` em `tools/call` / `resources/read`). O Cursor envia isso automaticamente.
+
+O spike aceita `redirect_uri` em `localhost` / `127.0.0.1` e esquemas `cursor://`. Clientes públicos também podem usar `POST /register` (RFC 7591).
+
+## Fluxo OAuth
+
+```
+Cursor → POST /mcp (sem Bearer)
+Server → 401 WWW-Authenticate resource_metadata=...
+Cursor → GET /.well-known/oauth-protected-resource
+Cursor → GET /.well-known/oauth-authorization-server
+Cursor → GET /authorize?response_type=code&code_challenge=...&redirect_uri=...
+Server → 302 /login?ticket=...
+User   → POST /login (botão)
+Server → 302 callback?code=...&state=...
+Cursor → POST /token (code + code_verifier)
+Server → access_token JWT
+Cursor → POST /mcp Authorization: Bearer ...
+```
+
+## Contratos
+
+- `POST /mcp` exige JWT HS256 com `iss=https://localhost:7071`, `aud=https://localhost:7071/mcp` (ou o origin) e `scope=mcp:tools`.
+- `GET /authorize` exige `response_type=code` e PKCE `S256`.
+- `POST /login` consome o ticket de uso único e redireciona ao `redirect_uri` do cliente.
+- `POST /token` valida code de uso único, expiração, client, redirect URI e PKCE.
+- JWT de demonstração dura 15 minutos. Authorization code dura 5 minutos.
+
+## Smoke tests
+
+```bash
+bash scripts/smoke.sh
+```
+
+O script sobe o servidor se `/health` não responder e valida health, Scalar, discovery, challenge 401, fluxo PKCE/login/token, chamadas MCP autenticadas e os casos negativos (code reutilizado, PKCE inválido, JWT expirado/inválido).
+
+## Checklist de validação
+
+- [ ] `dotnet dev-certs https --trust` executado
+- [ ] `dotnet build -c Release` sem erros
+- [ ] App escuta apenas `https://localhost:7071`
+- [ ] `/health` retorna `{ "status": "ok" }`
+- [ ] `/scalar` abre e lista health/OAuth
+- [ ] `/.well-known/oauth-protected-resource` contém `resource` e `authorization_servers`
+- [ ] `/.well-known/oauth-authorization-server` contém `authorization_endpoint`, `token_endpoint` e `code_challenge_methods_supported: ["S256"]`
+- [ ] `POST /mcp` sem token → `401`
+- [ ] Header `WWW-Authenticate` contém `Bearer` e `resource_metadata="https://localhost:7071/.well-known/oauth-protected-resource"`
+- [ ] `/authorize` redireciona para `/login`
+- [ ] Botão de login gera callback com `code` e `state`
+- [ ] `/token` devolve JWT Bearer
+- [ ] JWT contém `sub=demo-user` e `scope=mcp:tools`
+- [ ] `tools/list` mostra `hello_world`
+- [ ] `tools/call` de `hello_world` retorna `Hello, world!`
+- [ ] `resources/list` mostra `hello://world`
+- [ ] `resources/read` de `hello://world` retorna `Hello, world!`
+- [ ] Code OAuth reutilizado → `invalid_grant`
+- [ ] `code_verifier` errado → `invalid_grant`
+- [ ] JWT expirado ou inválido → `401`
+- [ ] Cursor completa o login e passa a listar a tool/resource
+
+## Limitações do spike
+
+- Sem banco, refresh token, consentimento real ou rotação de chaves
+- HMAC compartilhado em `appsettings.json`
+- Clientes desconhecidos são aceitos se o `redirect_uri` for loopback/`cursor://`
+- Sem suíte de testes de unidade; a garantia é o smoke HTTP/MCP
