@@ -4,7 +4,7 @@ namespace CursorMcp.Server;
 
 internal static class AgentDebugLog
 {
-    private const string LogPath = @"c:\_projeto\cursor-mcp\debug-36721c.log";
+    private const string LogPath = @"c:\_projeto\cursor-mcp\debug-1370e5.log";
 
     public static void Write(string hypothesisId, string location, string message, object data)
     {
@@ -13,7 +13,7 @@ internal static class AgentDebugLog
         {
             var line = JsonSerializer.Serialize(new
             {
-                sessionId = "36721c",
+                sessionId = "1370e5",
                 timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 hypothesisId,
                 location,

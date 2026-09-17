@@ -4,6 +4,8 @@ Servidor MCP HTTP **stateless** (`2026-07-28`) em **.NET 10**, servido em `https
 
 Este repositório é um spike de conectividade Cursor ↔ MCP. Credenciais, chave HMAC e armazenamento em memória **não são adequados para produção**.
 
+Como conectar o Cursor (HTTP loopback vs HTTPS autoassinado, Node 22, PEM, `mcp-remote`): [docs/cursor-conectividade.md](docs/cursor-conectividade.md). Instruções curtas para IA: [AGENTS.md](AGENTS.md).
+
 ## O que está incluso
 
 - `POST /mcp` — Streamable HTTP MCP, sem sessão (`HttpServerSessionMode.Stateless`)
@@ -122,7 +124,7 @@ O script sobe o servidor se `/health` não responder e valida health, Scalar, di
 - [ ] Code OAuth reutilizado → `invalid_grant`
 - [ ] `code_verifier` errado → `invalid_grant`
 - [ ] JWT expirado ou inválido → `401`
-- [ ] Cursor completa o login e passa a listar a tool/resource
+- [ ] Cursor completa o login e passa a listar a tool/resource (playbook: [docs/cursor-conectividade.md](docs/cursor-conectividade.md))
 
 ## Limitações do spike
 

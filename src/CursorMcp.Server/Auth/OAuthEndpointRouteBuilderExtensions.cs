@@ -50,6 +50,15 @@ public static class OAuthEndpointRouteBuilderExtensions
     private static IResult GetMetadata(IOptions<SpikeAuthOptions> optionsAccessor)
     {
         var issuer = optionsAccessor.Value.Issuer;
+        // #region agent log
+        AgentDebugLog.Write("A", "OAuth:GetMetadata", "AS metadata served without DCR", new
+        {
+            issuer,
+            hasRegistrationEndpoint = false,
+            authorizationEndpoint = $"{issuer}/authorize",
+            tokenEndpoint = $"{issuer}/token"
+        });
+        // #endregion
         return Results.Json(new
         {
             issuer,
@@ -78,16 +87,23 @@ public static class OAuthEndpointRouteBuilderExtensions
     {
         var options = optionsAccessor.Value;
 
+        OAuthClient? resolvedClient = null;
+        var clientFound = !string.IsNullOrWhiteSpace(clientId) && store.TryGetClient(clientId!, out resolvedClient!);
+        var redirectAllowed = clientFound && resolvedClient!.AllowsRedirectUri(redirectUri);
         // #region agent log
         AgentDebugLog.Write("E", "OAuth:Authorize", "Authorize request received", new
         {
+            runId = "post-fix",
             clientId,
             redirectUri,
             responseType,
             codeChallengeMethod,
             scope,
             resource,
-            hasCodeChallenge = !string.IsNullOrWhiteSpace(codeChallenge)
+            hasCodeChallenge = !string.IsNullOrWhiteSpace(codeChallenge),
+            clientFound,
+            redirectAllowed,
+            registeredRedirectUris = clientFound ? resolvedClient!.RedirectUris.ToArray() : Array.Empty<string>()
         });
         // #endregion
 
@@ -96,12 +112,14 @@ public static class OAuthEndpointRouteBuilderExtensions
             return OAuthError("invalid_request", "client_id is required.");
         }
 
-        if (!store.TryGetClient(clientId, out var client))
+        if (!clientFound)
         {
             return OAuthError("unauthorized_client", "The client is not registered.");
         }
 
-        if (!client.AllowsRedirectUri(redirectUri))
+        var client = resolvedClient!;
+
+        if (!redirectAllowed)
         {
             return OAuthError("invalid_request", "redirect_uri is not registered for this client.");
         }

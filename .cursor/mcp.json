@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "cursor-mcp-spike": {
+      "command": "C:/Users/herna/AppData/Local/nodejs-lts/node.exe",
+      "args": [
+        "C:/_projeto/cursor-mcp/node_modules/mcp-remote/dist/proxy.js",
+        "https://localhost:7071/mcp",
+        "9999",
+        "--host",
+        "127.0.0.1",
+        "--static-oauth-client-info",
+        "@C:/_projeto/cursor-mcp/.cursor/oauth-client-info.json"
+      ],
+      "env": {
+        "NODE_EXTRA_CA_CERTS": "C:/_projeto/cursor-mcp/certs/localhost.pem"
+      }
+    }
+  }
+}

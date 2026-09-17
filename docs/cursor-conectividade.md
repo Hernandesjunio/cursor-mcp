@@ -120,7 +120,12 @@ Por isso o `mcp.json` chama **direto** o `node.exe` v22 + `dist/proxy.js` + URL 
       "command": "C:/Users/herna/AppData/Local/nodejs-lts/node.exe",
       "args": [
         "C:/_projeto/cursor-mcp/node_modules/mcp-remote/dist/proxy.js",
-        "https://localhost:7071/mcp"
+        "https://localhost:7071/mcp",
+        "9999",
+        "--host",
+        "127.0.0.1",
+        "--static-oauth-client-info",
+        "@C:/_projeto/cursor-mcp/.cursor/oauth-client-info.json"
       ],
       "env": {
         "NODE_EXTRA_CA_CERTS": "C:/_projeto/cursor-mcp/certs/localhost.pem"
@@ -130,7 +135,32 @@ Por isso o `mcp.json` chama **direto** o `node.exe` v22 + `dist/proxy.js` + URL 
 }
 ```
 
+Sem DCR no AS, o `mcp-remote` precisa de `--static-oauth-client-info` com o `client_id` pré-registrado (`cursor-mcp-spike`). Porta `9999` + host `127.0.0.1` alinham o callback padrão (`/oauth/callback`) ao cadastro em `SpikeAuth:Clients`. O JSON do client fica em `.cursor/oauth-client-info.json`.
+
+**Importante:** se existir `~/.cursor/mcp.json` (user-level), o Cursor usa esse arquivo (namespace `user-…`) e **ignora** o `.cursor/mcp.json` do projeto para esse server name. Mantenha os dois alinhados, ou remova a entrada antiga do user-level.
+
 Reload Window → Authenticate. O browser deve abrir `/login`, não `/mcp`. Entrar como `demo-user`. Confirmar `hello_world`.
+Se ainda aparecer `dyn-*` / DCR, apague `~/.mcp-auth/mcp-remote-v1/` e recarregue.
+
+### 6. Detalhes técnicos (o que cada peça faz)
+
+| Peça | Função |
+| --- | --- |
+| `C:/Users/herna/AppData/Local/nodejs-lts/node.exe` | Runtime **v22**. O PATH do MCP do Cursor neste PC resolve `C:\Program Files\nodejs` (**v12** / npm 6). Sem path absoluto o spawn usa o Node velho. |
+| `node_modules/mcp-remote/dist/proxy.js` | Bin stdio → Streamable HTTP. O Cursor não faz TLS; quem faz `fetch` HTTPS é este processo. |
+| `https://localhost:7071/mcp` | Resource MCP (JWT `aud`). |
+| `9999` | Porta do callback HTTP local que o `mcp-remote` sobe (`http://127.0.0.1:9999/oauth/callback`). |
+| `--host 127.0.0.1` | Evita `localhost` vs IPv6 (`::1`) no callback. |
+| `--static-oauth-client-info @.cursor/oauth-client-info.json` | Força `client_id=cursor-mcp-spike`. Sem isso o `mcp-remote` tenta DCR (`dyn-*`) e o AS deste spike recusa. |
+| `NODE_EXTRA_CA_CERTS` | CA extra **só** para o Node do proxy. O fetch interno do Cursor não lê esta variável. |
+| `certs/localhost.pem` | Export do `dotnet dev-certs` (`BEGIN CERTIFICATE`). Gitignored. |
+| `SpikeAuth:Clients` | Cadastro B2C-like. Sem `POST /register`. |
+
+Matching de `redirect_uri` (`OAuthClient.AllowsRedirectUri`): igualdade exata **ou**, em loopback, mesmo scheme + host + path **ignorando a porta** (comportamento de app nativa Entra/B2C). Por isso `http://127.0.0.1:9999/oauth/callback` casa com o URI cadastrado mesmo se a porta efetiva variar.
+
+`GET /mcp` é só Streamable HTTP (POST). Se o Authenticate abrir essa URL no browser → **405**: OAuth não chegou em `/authorize` (quase sempre `client_id`/`redirect_uri` errados).
+
+Precedência do Cursor: se existir `~/.cursor/mcp.json` com o mesmo server name, o namespace vira `user-…` e o `.cursor/mcp.json` **do projeto é ignorado**.
 
 ---
 
@@ -162,6 +192,6 @@ Copiar e seguir nesta ordem. Não inventar `"url"` HTTPS nativo contra cert auto
 4. Descobrir Node: `where node`. Usar path absoluto de **v22+** (`nodejs-lts` neste PC). **Não** usar `C:\Program Files\nodejs\node.exe` se for v12.
 5. Com esse Node: `npm install` na raiz (dependência `mcp-remote`). Entrypoint: `node_modules/mcp-remote/dist/proxy.js` (stdio → HTTP; o Cursor não faz o TLS).
 6. PEM: `dotnet dev-certs https -ep certs/localhost.pem --format Pem --no-password`. `mcp.json` `env.NODE_EXTRA_CA_CERTS` apontando para esse arquivo.
-7. `mcp.json` `command` = node.exe v22; `args` = `[proxy.js, https://localhost:7071/mcp]`.
+7. `mcp.json` (projeto **e** `~/.cursor/mcp.json` se existir) `command` = node.exe v22; `args` = `[proxy.js, https://localhost:7071/mcp, 9999, --host, 127.0.0.1, --static-oauth-client-info, @.cursor/oauth-client-info.json]`.
 8. Developer: Reload Window. Authenticate → `/login` → `demo-user` → `hello_world`.
 9. Sintomas: **405** → `redirect_uri`/`client_id` não cadastrados; **-32000** → npx/Node velho instalando a URL; `fetch failed` → TLS do host Cursor (não usar `"url"` HTTPS local).
