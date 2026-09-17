@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BASE="${BASE_URL:-http://localhost:7071}"
+BASE="${BASE_URL:-https://localhost:7071}"
 MCP="$BASE/mcp"
 PROTOCOL="2026-07-28"
 REDIRECT_URI="http://127.0.0.1:9999/callback"
@@ -112,6 +112,21 @@ PRM="$(curl -sk "$BASE/.well-known/oauth-protected-resource")"
 echo "$PRM" | grep -q 'authorization_servers' && echo "$PRM" | grep -q "$MCP" && pass "Protected resource metadata" || fail "PRM: $PRM"
 ASM="$(curl -sk "$BASE/.well-known/oauth-authorization-server")"
 echo "$ASM" | grep -F -q '"code_challenge_methods_supported":["S256"]' && echo "$ASM" | grep -F -q '"authorization_endpoint"' && pass "Authorization server metadata" || fail "AS metadata: $ASM"
+echo "$ASM" | grep -q '"registration_endpoint"' && fail "Metadata should not advertise DCR" || pass "Metadata omits registration_endpoint"
+
+log "Pre-registered client validation"
+DUMMY_CHALLENGE="E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+UNKNOWN_CLIENT="$(curl -sk "$BASE/authorize?response_type=code&client_id=unknown-app&redirect_uri=$(urlencode "$REDIRECT_URI")&state=x&code_challenge=$DUMMY_CHALLENGE&code_challenge_method=S256")"
+echo "$UNKNOWN_CLIENT" | grep -q 'unauthorized_client' && pass "Unknown client_id is rejected" || fail "Unknown client: $UNKNOWN_CLIENT"
+BAD_URI="$(curl -sk "$BASE/authorize?response_type=code&client_id=$(urlencode "$CLIENT_ID")&redirect_uri=$(urlencode "https://evil.example/callback")&state=x&code_challenge=$DUMMY_CHALLENGE&code_challenge_method=S256")"
+echo "$BAD_URI" | grep -q 'redirect_uri is not registered' && pass "Unregistered redirect_uri is rejected" || fail "Bad redirect: $BAD_URI"
+UNKNOWN_TOKEN="$(curl -sk -X POST "$BASE/token" -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "grant_type=authorization_code" \
+  --data-urlencode "client_id=unknown-app" \
+  --data-urlencode "code=not-a-code" \
+  --data-urlencode "redirect_uri=$REDIRECT_URI" \
+  --data-urlencode "code_verifier=not-a-verifier")"
+echo "$UNKNOWN_TOKEN" | grep -q 'invalid_client' && pass "Unknown client_id on /token is rejected" || fail "Token unknown client: $UNKNOWN_TOKEN"
 
 log "401 challenge without bearer token"
 CHALLENGE_HEADERS="$(curl -sk -D - -o /tmp/mcp_unauth.json -X POST "$MCP" \
@@ -143,6 +158,7 @@ LOGIN_URL="$(echo "$AUTH_HEADERS" | awk 'tolower($1)=="location:"{print $2}' | t
 TICKET="${LOGIN_URL##*ticket=}"
 LOGIN_PAGE="$(curl -sk "$LOGIN_URL")"
 echo "$LOGIN_PAGE" | grep -q 'Entrar como demo-user' && pass "GET /login renders button" || fail "Login page missing button"
+echo "$LOGIN_PAGE" | grep -q 'cursor-mcp-spike' && pass "GET /login shows registered client_id" || fail "Login page missing client_id"
 
 LOGIN_HEADERS="$(curl -sk -D - -o /dev/null -X POST "$BASE/login" -H "Content-Type: application/x-www-form-urlencoded" --data-urlencode "ticket=$TICKET")"
 CALLBACK="$(echo "$LOGIN_HEADERS" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r' | tail -n1)"
@@ -173,9 +189,10 @@ payload = token.split(".")[1] + "=" * ((4 - len(token.split(".")[1]) % 4) % 4)
 data = json.loads(base64.urlsafe_b64decode(payload.encode()))
 assert data.get("sub") == "demo-user", data
 assert "mcp:tools" in data.get("scope", ""), data
+assert data.get("client_id") == "cursor-mcp-spike", data
 print("ok")
 PY
-pass "JWT claims include sub=demo-user and scope"
+pass "JWT claims include sub, client_id, and scope"
 fi
 
 log "Authenticated MCP hello world"

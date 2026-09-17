@@ -10,7 +10,7 @@ Este repositório é um spike de conectividade Cursor ↔ MCP. Credenciais, chav
 - Tool `hello_world`
 - Resource `hello://world`
 - `401` + `WWW-Authenticate: Bearer resource_metadata="https://localhost:7071/.well-known/oauth-protected-resource"`
-- Authorization Server mínimo hospedado na própria app (`/authorize`, `/login`, `/token`, `/register`)
+- Authorization Server local que simula um cadastro Azure B2C: clientes pré-registrados em `SpikeAuth:Clients` (`/authorize`, `/login`, `/token`)
 - Scalar em `/scalar` para os endpoints HTTP auxiliares (OAuth/health). O endpoint MCP **não** é executável pelo Scalar.
 
 ## Pré-requisitos
@@ -42,30 +42,29 @@ URLs:
 
 ## Conectar no Cursor
 
-1. Suba o servidor HTTPS.
-2. Confie no certificado de desenvolvimento.
-3. Cadastre o MCP remoto, por exemplo em `mcp.json`:
+HTTP em loopback é o caminho simples. `"url": "https://localhost:7071/mcp"` **não** funciona no Cursor só com `dotnet dev-certs https --trust` (o fetch do MCP ignora o store do Windows).
+
+Playbook completo (HTTP vs HTTPS local, Node 22, PEM, `proxy.js`, OAuth com cliente pré-registrado): [docs/cursor-conectividade.md](docs/cursor-conectividade.md).
+
+Loopback HTTP:
 
 ```json
 {
   "mcpServers": {
     "cursor-mcp-spike": {
-      "url": "https://localhost:7071/mcp"
+      "url": "http://localhost:7071/mcp"
     }
   }
 }
 ```
 
-4. O Cursor chama `POST /mcp` sem token e recebe `401` com `resource_metadata`.
-5. O Cursor abre `/authorize` → `/login`.
-6. Clique em **Entrar como demo-user**.
-7. A app redireciona para o callback do Cursor com `code` + `state`.
-8. O Cursor troca o code em `/token` e passa a enviar `Authorization: Bearer <JWT>`.
-9. Confirme a tool `hello_world` e o resource `hello://world`.
+HTTPS local autoassinado: Node 22 + `mcp-remote` (`dist/proxy.js`) + `NODE_EXTRA_CA_CERTS` — ver o doc. Produção com CA pública: `"url": "https://mcp.dominio/mcp"`.
+
+Depois de alterar o `mcp.json`, recarregue a **janela** do Cursor. Authenticate → `/login` → **Entrar como demo-user**. Confirme `hello_world` e `hello://world`.
 
 Chamadas JSON-RPC manuais para `2026-07-28` precisam dos headers `MCP-Protocol-Version` e `Mcp-Method` (e `Mcp-Name` em `tools/call` / `resources/read`). O Cursor envia isso automaticamente.
 
-O spike aceita `redirect_uri` em `localhost` / `127.0.0.1` e esquemas `cursor://`. Clientes públicos também podem usar `POST /register` (RFC 7591).
+O `401` do MCP só anuncia `resource_metadata`. O `client_id` chega no `GET /authorize` e precisa existir em `SpikeAuth:Clients`, com `redirect_uri` cadastrado para essa aplicação (loopback ignora a porta, como apps nativas no Entra/B2C). Não há Dynamic Client Registration: este spike simula um app B2C já registrado, não um AS que emite `client_id` sob demanda.
 
 ## Fluxo OAuth
 
@@ -74,7 +73,7 @@ Cursor → POST /mcp (sem Bearer)
 Server → 401 WWW-Authenticate resource_metadata=...
 Cursor → GET /.well-known/oauth-protected-resource
 Cursor → GET /.well-known/oauth-authorization-server
-Cursor → GET /authorize?response_type=code&code_challenge=...&redirect_uri=...
+Cursor → GET /authorize?client_id=cursor-mcp-spike&response_type=code&code_challenge=...&redirect_uri=...
 Server → 302 /login?ticket=...
 User   → POST /login (botão)
 Server → 302 callback?code=...&state=...
@@ -86,9 +85,9 @@ Cursor → POST /mcp Authorization: Bearer ...
 ## Contratos
 
 - `POST /mcp` exige JWT HS256 com `iss=https://localhost:7071`, `aud=https://localhost:7071/mcp` (ou o origin) e `scope=mcp:tools`.
-- `GET /authorize` exige `response_type=code` e PKCE `S256`.
+- `GET /authorize` exige `client_id` pré-registrado, `redirect_uri` da aplicação, `response_type=code` e PKCE `S256`.
 - `POST /login` consome o ticket de uso único e redireciona ao `redirect_uri` do cliente.
-- `POST /token` valida code de uso único, expiração, client, redirect URI e PKCE.
+- `POST /token` valida `client_id` pré-registrado, code de uso único, expiração, redirect URI e PKCE.
 - JWT de demonstração dura 15 minutos. Authorization code dura 5 minutos.
 
 ## Smoke tests
@@ -97,7 +96,7 @@ Cursor → POST /mcp Authorization: Bearer ...
 bash scripts/smoke.sh
 ```
 
-O script sobe o servidor se `/health` não responder e valida health, Scalar, discovery, challenge 401, fluxo PKCE/login/token, chamadas MCP autenticadas e os casos negativos (code reutilizado, PKCE inválido, JWT expirado/inválido).
+O script sobe o servidor se `/health` não responder e valida health, Scalar, discovery, clientes pré-registrados, challenge 401, fluxo PKCE/login/token, chamadas MCP autenticadas e os casos negativos (cliente desconhecido, redirect URI inválida, code reutilizado, PKCE inválido, JWT expirado/inválido).
 
 ## Checklist de validação
 
@@ -107,10 +106,12 @@ O script sobe o servidor se `/health` não responder e valida health, Scalar, di
 - [ ] `/health` retorna `{ "status": "ok" }`
 - [ ] `/scalar` abre e lista health/OAuth
 - [ ] `/.well-known/oauth-protected-resource` contém `resource` e `authorization_servers`
-- [ ] `/.well-known/oauth-authorization-server` contém `authorization_endpoint`, `token_endpoint` e `code_challenge_methods_supported: ["S256"]`
+- [ ] `/.well-known/oauth-authorization-server` contém `authorization_endpoint`, `token_endpoint` e `code_challenge_methods_supported: ["S256"]`, sem `registration_endpoint`
 - [ ] `POST /mcp` sem token → `401`
 - [ ] Header `WWW-Authenticate` contém `Bearer` e `resource_metadata="https://localhost:7071/.well-known/oauth-protected-resource"`
-- [ ] `/authorize` redireciona para `/login`
+- [ ] `client_id` desconhecido em `/authorize` → `unauthorized_client`
+- [ ] `redirect_uri` não cadastrado → `invalid_request`
+- [ ] `/authorize` com cliente registrado redireciona para `/login`
 - [ ] Botão de login gera callback com `code` e `state`
 - [ ] `/token` devolve JWT Bearer
 - [ ] JWT contém `sub=demo-user` e `scope=mcp:tools`
@@ -127,5 +128,5 @@ O script sobe o servidor se `/health` não responder e valida health, Scalar, di
 
 - Sem banco, refresh token, consentimento real ou rotação de chaves
 - HMAC compartilhado em `appsettings.json`
-- Clientes desconhecidos são aceitos se o `redirect_uri` for loopback/`cursor://`
+- Clientes e redirect URIs vêm de configuração em memória; não há Dynamic Client Registration
 - Sem suíte de testes de unidade; a garantia é o smoke HTTP/MCP

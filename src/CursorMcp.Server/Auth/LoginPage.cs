@@ -4,10 +4,11 @@ namespace CursorMcp.Server.Auth;
 
 internal static class LoginPage
 {
-    public static string Render(string ticket, string clientId)
+    public static string Render(string ticket, string clientId, string clientName)
     {
         var safeTicket = WebUtility.HtmlEncode(ticket);
         var safeClient = WebUtility.HtmlEncode(clientId);
+        var safeName = WebUtility.HtmlEncode(clientName);
 
         return $$"""
             <!DOCTYPE html>
@@ -55,9 +56,9 @@ internal static class LoginPage
             </head>
             <body>
               <main>
-                <h1>Autorizar o Cursor</h1>
-                <p>Spike local de conectividade MCP. Cliente: <code>{{safeClient}}</code>.</p>
-                <p>Ao continuar, um authorization code é gerado e o callback do Cursor é executado.</p>
+                <h1>Autorizar {{safeName}}</h1>
+                <p>Simulação local de aplicação pré-registrada (Azure B2C). Cliente: <code>{{safeClient}}</code>.</p>
+                <p>Ao continuar, um authorization code é gerado e o callback do cliente é executado.</p>
                 <form method="post" action="/login">
                   <input type="hidden" name="ticket" value="{{safeTicket}}" />
                   <button type="submit">Entrar como demo-user</button>

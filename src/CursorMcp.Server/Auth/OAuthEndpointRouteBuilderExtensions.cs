@@ -44,12 +44,6 @@ public static class OAuthEndpointRouteBuilderExtensions
             .Produces<OAuthErrorResponse>(StatusCodes.Status400BadRequest)
             .DisableAntiforgery();
 
-        oauth.MapPost("/register", RegisterClient)
-            .WithName("RegisterClient")
-            .WithSummary("RFC 7591 dynamic client registration for public Cursor clients.")
-            .Produces<ClientRegistrationResponse>(StatusCodes.Status200OK)
-            .Produces<OAuthErrorResponse>(StatusCodes.Status400BadRequest);
-
         return app;
     }
 
@@ -61,7 +55,6 @@ public static class OAuthEndpointRouteBuilderExtensions
             issuer,
             authorization_endpoint = $"{issuer}/authorize",
             token_endpoint = $"{issuer}/token",
-            registration_endpoint = $"{issuer}/register",
             response_types_supported = new[] { "code" },
             grant_types_supported = new[] { "authorization_code" },
             code_challenge_methods_supported = new[] { "S256" },
@@ -103,15 +96,14 @@ public static class OAuthEndpointRouteBuilderExtensions
             return OAuthError("invalid_request", "client_id is required.");
         }
 
-        if (!IsAllowedRedirectUri(redirectUri))
+        if (!store.TryGetClient(clientId, out var client))
         {
-            return OAuthError("invalid_request", "redirect_uri must be localhost, 127.0.0.1, or a cursor:// callback.");
+            return OAuthError("unauthorized_client", "The client is not registered.");
         }
 
-        var client = store.GetOrCreateClient(clientId);
-        if (client.RedirectUris.Count > 0 && !client.RedirectUris.Contains(redirectUri!))
+        if (!client.AllowsRedirectUri(redirectUri))
         {
-            return OAuthError("invalid_request", "Unregistered redirect_uri.");
+            return OAuthError("invalid_request", "redirect_uri is not registered for this client.");
         }
 
         if (!string.Equals(responseType, "code", StringComparison.Ordinal))
@@ -134,7 +126,8 @@ public static class OAuthEndpointRouteBuilderExtensions
         store.CreateTicket(new LoginTicket
         {
             Ticket = ticket,
-            ClientId = clientId,
+            ClientId = client.ClientId,
+            ClientName = client.Name,
             RedirectUri = redirectUri!,
             CodeChallenge = codeChallenge,
             State = state,
@@ -153,7 +146,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             return Results.Content("<h1>Login expirado</h1><p>Reinicie a conexão MCP no Cursor.</p>", "text/html; charset=utf-8", statusCode: 400);
         }
 
-        return Results.Content(LoginPage.Render(pending.Ticket, pending.ClientId), "text/html; charset=utf-8");
+        return Results.Content(LoginPage.Render(pending.Ticket, pending.ClientId, pending.ClientName), "text/html; charset=utf-8");
     }
 
     private static async Task<IResult> CompleteLogin(HttpContext http, OAuthStore store)
@@ -188,12 +181,15 @@ public static class OAuthEndpointRouteBuilderExtensions
         var clientId = form["client_id"].ToString();
         var clientSecret = form["client_secret"].ToString();
 
-        if (string.IsNullOrEmpty(clientId))
+        if (string.IsNullOrEmpty(clientId) || !store.TryGetClient(clientId, out var client))
         {
-            clientId = options.DemoClientId;
+            return Results.Json(new OAuthErrorResponse
+            {
+                Error = "invalid_client",
+                ErrorDescription = "The client is not registered."
+            }, statusCode: StatusCodes.Status401Unauthorized);
         }
 
-        var client = store.GetOrCreateClient(clientId);
         if (client.RequiresSecret && client.ClientSecret != clientSecret)
         {
             return Results.Json(new OAuthErrorResponse
@@ -259,50 +255,6 @@ public static class OAuthEndpointRouteBuilderExtensions
         });
     }
 
-    private static async Task<IResult> RegisterClient(HttpContext http, OAuthStore store)
-    {
-        ClientRegistrationRequest? request;
-        try
-        {
-            request = await http.Request.ReadFromJsonAsync<ClientRegistrationRequest>();
-        }
-        catch (Exception)
-        {
-            return OAuthError("invalid_request", "Invalid registration request.");
-        }
-
-        if (request is null || request.RedirectUris.Count == 0)
-        {
-            return OAuthError("invalid_redirect_uri", "At least one redirect URI must be provided.");
-        }
-
-        foreach (var redirectUri in request.RedirectUris)
-        {
-            if (!IsAllowedRedirectUri(redirectUri))
-            {
-                return OAuthError("invalid_redirect_uri", $"Invalid redirect URI: {redirectUri}");
-            }
-        }
-
-        var requiresSecret = string.Equals(request.TokenEndpointAuthMethod, "client_secret_post", StringComparison.Ordinal);
-        // #region agent log
-        AgentDebugLog.Write("E", "OAuth:RegisterClient", "Client registered", new
-        {
-            redirectCount = request.RedirectUris.Count,
-            firstRedirectScheme = Uri.TryCreate(request.RedirectUris[0], UriKind.Absolute, out var firstUri) ? firstUri.Scheme : "invalid",
-            tokenEndpointAuthMethod = request.TokenEndpointAuthMethod
-        });
-        // #endregion
-        var client = store.Register(request.RedirectUris, requiresSecret);
-        return Results.Json(new ClientRegistrationResponse
-        {
-            ClientId = client.ClientId,
-            ClientIdIssuedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds(),
-            RedirectUris = client.RedirectUris,
-            TokenEndpointAuthMethod = requiresSecret ? "client_secret_post" : "none"
-        });
-    }
-
     private static IResult OAuthError(string error, string description) =>
         Results.Json(new OAuthErrorResponse { Error = error, ErrorDescription = description }, statusCode: StatusCodes.Status400BadRequest);
 
@@ -315,22 +267,6 @@ public static class OAuthEndpointRouteBuilderExtensions
             ["state"] = state
         });
         return Results.Redirect(callback);
-    }
-
-    public static bool IsAllowedRedirectUri(string? redirectUri)
-    {
-        if (!Uri.TryCreate(redirectUri, UriKind.Absolute, out var uri))
-        {
-            return false;
-        }
-
-        if (uri.Scheme.StartsWith("cursor", StringComparison.OrdinalIgnoreCase))
-        {
-            return true;
-        }
-
-        return uri.Scheme is "http" or "https" &&
-               (uri.IsLoopback || uri.Host is "localhost");
     }
 
     public static bool TryNormalizeResource(string? resource, SpikeAuthOptions options, out string normalized)
@@ -350,9 +286,7 @@ public static class OAuthEndpointRouteBuilderExtensions
 
         if (allowed.Any(value => string.Equals(value, candidate, StringComparison.OrdinalIgnoreCase)))
         {
-            normalized = string.Equals(candidate, options.Issuer, StringComparison.OrdinalIgnoreCase)
-                ? options.Resource
-                : options.Resource;
+            normalized = options.Resource;
             return true;
         }
 

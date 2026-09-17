@@ -14,34 +14,22 @@ public sealed class OAuthStore
     public OAuthStore(IOptions<SpikeAuthOptions> options)
     {
         _options = options.Value;
-        _clients[_options.DemoClientId] = new OAuthClient
+        foreach (var registered in _options.Clients)
         {
-            ClientId = _options.DemoClientId,
-            RequiresSecret = false,
-            RedirectUris = []
-        };
-    }
+            if (string.IsNullOrWhiteSpace(registered.ClientId))
+            {
+                continue;
+            }
 
-    public OAuthClient GetOrCreateClient(string clientId)
-    {
-        return _clients.GetOrAdd(clientId, id => new OAuthClient
-        {
-            ClientId = id,
-            RequiresSecret = false,
-            RedirectUris = []
-        });
-    }
-
-    public OAuthClient Register(IReadOnlyList<string> redirectUris, bool requiresSecret)
-    {
-        var client = new OAuthClient
-        {
-            ClientId = $"dyn-{Guid.NewGuid():N}",
-            RequiresSecret = requiresSecret,
-            RedirectUris = [.. redirectUris]
-        };
-        _clients[client.ClientId] = client;
-        return client;
+            _clients[registered.ClientId] = new OAuthClient
+            {
+                ClientId = registered.ClientId,
+                Name = string.IsNullOrWhiteSpace(registered.Name) ? registered.ClientId : registered.Name,
+                ClientSecret = registered.ClientSecret,
+                RequiresSecret = registered.RequiresSecret,
+                RedirectUris = [.. registered.RedirectUris]
+            };
+        }
     }
 
     public bool TryGetClient(string clientId, out OAuthClient client) =>

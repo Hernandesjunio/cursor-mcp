@@ -5,15 +5,51 @@ namespace CursorMcp.Server.Auth;
 public sealed class OAuthClient
 {
     public required string ClientId { get; init; }
+    public string Name { get; init; } = "";
     public string? ClientSecret { get; init; }
     public bool RequiresSecret { get; init; }
     public List<string> RedirectUris { get; init; } = [];
+
+    public bool AllowsRedirectUri(string? redirectUri)
+    {
+        if (!Uri.TryCreate(redirectUri, UriKind.Absolute, out var requested))
+        {
+            return false;
+        }
+
+        foreach (var registered in RedirectUris)
+        {
+            if (string.Equals(registered, redirectUri, StringComparison.Ordinal))
+            {
+                return true;
+            }
+
+            if (!Uri.TryCreate(registered, UriKind.Absolute, out var allowed))
+            {
+                continue;
+            }
+
+            if (IsLoopback(requested) && IsLoopback(allowed) &&
+                string.Equals(requested.Scheme, allowed.Scheme, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(requested.Host, allowed.Host, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(requested.AbsolutePath, allowed.AbsolutePath, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsLoopback(Uri uri) =>
+        uri.IsLoopback || uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase);
 }
 
 public sealed class LoginTicket
 {
     public required string Ticket { get; init; }
     public required string ClientId { get; init; }
+    public required string ClientName { get; init; }
     public required string RedirectUri { get; init; }
     public required string CodeChallenge { get; init; }
     public string? State { get; init; }
@@ -55,43 +91,4 @@ public sealed class OAuthErrorResponse
 
     [JsonPropertyName("error_description")]
     public string? ErrorDescription { get; init; }
-}
-
-public sealed class ClientRegistrationRequest
-{
-    [JsonPropertyName("redirect_uris")]
-    public List<string> RedirectUris { get; set; } = [];
-
-    [JsonPropertyName("token_endpoint_auth_method")]
-    public string? TokenEndpointAuthMethod { get; set; }
-
-    [JsonPropertyName("grant_types")]
-    public List<string>? GrantTypes { get; set; }
-
-    [JsonPropertyName("response_types")]
-    public List<string>? ResponseTypes { get; set; }
-
-    [JsonPropertyName("client_name")]
-    public string? ClientName { get; set; }
-}
-
-public sealed class ClientRegistrationResponse
-{
-    [JsonPropertyName("client_id")]
-    public required string ClientId { get; init; }
-
-    [JsonPropertyName("client_id_issued_at")]
-    public long ClientIdIssuedAt { get; init; }
-
-    [JsonPropertyName("redirect_uris")]
-    public required List<string> RedirectUris { get; init; }
-
-    [JsonPropertyName("grant_types")]
-    public string[] GrantTypes { get; init; } = ["authorization_code"];
-
-    [JsonPropertyName("response_types")]
-    public string[] ResponseTypes { get; init; } = ["code"];
-
-    [JsonPropertyName("token_endpoint_auth_method")]
-    public string TokenEndpointAuthMethod { get; init; } = "none";
 }
