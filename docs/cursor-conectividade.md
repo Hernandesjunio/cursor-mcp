@@ -14,9 +14,9 @@ flowchart LR
   end
 ```
 
-O servidor deve ter `https://www.cursor.com/agents/mcp/oauth/callback` na lista `SpikeAuth:Clients[].RedirectUris` da aplicação pré-registrada. Sem isso o Authenticate abre `GET /mcp` e o browser mostra **405**. Não há `POST /register`: o `client_id` precisa ser o cadastrado (padrão `cursor-mcp-spike`).
+O servidor deve ter os redirects da aplicação pré-registrada em `SpikeAuth:Clients[].RedirectUris`: `https://www.cursor.com/agents/mcp/oauth/callback` (web), `http://localhost:8787/callback` (Cursor nativo) e os de `mcp-remote` (`9999`). Sem isso o Authenticate abre `GET /mcp` e o browser mostra **405**. Não há `POST /register`: o `client_id` é o Application ID Guid cadastrado (`8f3a2c1b-6e4d-4a90-9c7e-1b2d3e4f5a60`). O nome do server MCP (`cursor-mcp-spike`) **não** é o `client_id`.
 
-Não use bloco `auth` / `CLIENT_ID` no `mcp.json`. Depois de mudar o arquivo, recarregue a **janela** do Cursor (Developer: Reload Window), não só o MCP.
+`auth.CLIENT_ID` no `mcp.json` vale **só** em entradas `"url"`. No HTTPS local (`command` + `mcp-remote`) o Guid vai em `.cursor/oauth-client-info.json` via `--static-oauth-client-info`. Depois de mudar o arquivo, recarregue a **janela** do Cursor (Developer: Reload Window), não só o MCP.
 
 ---
 
@@ -31,7 +31,11 @@ Use isto em loopback, a menos que o spike precise exercitar TLS.
 {
   "mcpServers": {
     "cursor-mcp-spike": {
-      "url": "http://localhost:7071/mcp"
+      "url": "http://localhost:7071/mcp",
+      "auth": {
+        "CLIENT_ID": "8f3a2c1b-6e4d-4a90-9c7e-1b2d3e4f5a60",
+        "scopes": ["mcp:tools"]
+      }
     }
   }
 }
@@ -135,7 +139,7 @@ Por isso o `mcp.json` chama **direto** o `node.exe` v22 + `dist/proxy.js` + URL 
 }
 ```
 
-Sem DCR no AS, o `mcp-remote` precisa de `--static-oauth-client-info` com o `client_id` pré-registrado (`cursor-mcp-spike`). Porta `9999` + host `127.0.0.1` alinham o callback padrão (`/oauth/callback`) ao cadastro em `SpikeAuth:Clients`. O JSON do client fica em `.cursor/oauth-client-info.json`.
+Sem DCR no AS, o `mcp-remote` precisa de `--static-oauth-client-info` com o Application ID Guid (`8f3a2c1b-6e4d-4a90-9c7e-1b2d3e4f5a60`). Porta `9999` + host `127.0.0.1` alinham o callback padrão (`/oauth/callback`) ao cadastro em `SpikeAuth:Clients`. O JSON do client fica em `.cursor/oauth-client-info.json`. Não coloque `auth.CLIENT_ID` nesta entrada stdio — o Cursor ignora.
 
 **Importante:** se existir `~/.cursor/mcp.json` (user-level), o Cursor usa esse arquivo (namespace `user-…`) e **ignora** o `.cursor/mcp.json` do projeto para esse server name. Mantenha os dois alinhados, ou remova a entrada antiga do user-level.
 
@@ -150,8 +154,9 @@ Se ainda aparecer `dyn-*` / DCR, apague `~/.mcp-auth/mcp-remote-v1/` e recarregu
 | `node_modules/mcp-remote/dist/proxy.js` | Bin stdio → Streamable HTTP. O Cursor não faz TLS; quem faz `fetch` HTTPS é este processo. |
 | `https://localhost:7071/mcp` | Resource MCP (JWT `aud`). |
 | `9999` | Porta do callback HTTP local que o `mcp-remote` sobe (`http://127.0.0.1:9999/oauth/callback`). |
+| `8787` | Callback nativo do Cursor (`http://localhost:8787/callback`) quando a conexão é `"url"` + `auth.CLIENT_ID`. |
 | `--host 127.0.0.1` | Evita `localhost` vs IPv6 (`::1`) no callback. |
-| `--static-oauth-client-info @.cursor/oauth-client-info.json` | Força `client_id=cursor-mcp-spike`. Sem isso o `mcp-remote` tenta DCR (`dyn-*`) e o AS deste spike recusa. |
+| `--static-oauth-client-info @.cursor/oauth-client-info.json` | Força `client_id=8f3a2c1b-6e4d-4a90-9c7e-1b2d3e4f5a60`. Sem isso o `mcp-remote` tenta DCR (`dyn-*`) e o AS deste spike recusa. |
 | `NODE_EXTRA_CA_CERTS` | CA extra **só** para o Node do proxy. O fetch interno do Cursor não lê esta variável. |
 | `certs/localhost.pem` | Export do `dotnet dev-certs` (`BEGIN CERTIFICATE`). Gitignored. |
 | `SpikeAuth:Clients` | Cadastro B2C-like. Sem `POST /register`. |
@@ -172,7 +177,11 @@ Certificado de CA pública (Let’s Encrypt, corporativa já na Mozilla CA):
 {
   "mcpServers": {
     "cursor-mcp-spike": {
-      "url": "https://mcp.seudominio.com/mcp"
+      "url": "https://mcp.seudominio.com/mcp",
+      "auth": {
+        "CLIENT_ID": "8f3a2c1b-6e4d-4a90-9c7e-1b2d3e4f5a60",
+        "scopes": ["mcp:tools"]
+      }
     }
   }
 }
@@ -186,12 +195,12 @@ Sem `mcp-remote`, sem PEM, sem pin de Node.
 
 Copiar e seguir nesta ordem. Não inventar `"url"` HTTPS nativo contra cert autoassinado.
 
-1. Se o serviço puder ser HTTP em loopback: `appsettings` + `PublicBaseUrl` em `http://localhost:7071`; `.cursor/mcp.json` só com `"url": "http://localhost:7071/mcp"`; sem `auth`/`CLIENT_ID`.
-2. Garantir o cliente pré-registrado: `client_id=cursor-mcp-spike` e `https://www.cursor.com/agents/mcp/oauth/callback` em `RedirectUris`. Sem isso Authenticate → `GET /mcp` → **405**. DCR (`POST /register`) não faz parte deste spike.
+1. Se o serviço puder ser HTTP em loopback: `appsettings` + `PublicBaseUrl` em `http://localhost:7071`; `.cursor/mcp.json` com `"url": "http://localhost:7071/mcp"` e `auth.CLIENT_ID` = Guid `8f3a2c1b-6e4d-4a90-9c7e-1b2d3e4f5a60` (sem `CLIENT_SECRET`).
+2. Garantir o cliente pré-registrado: o mesmo Guid em `SpikeAuth:Clients[].ClientId` e redirects `https://www.cursor.com/agents/mcp/oauth/callback` + `http://localhost:8787/callback`. Sem isso Authenticate → `GET /mcp` → **405**. DCR (`POST /register`) não faz parte deste spike. Nome MCP `cursor-mcp-spike` ≠ Application ID.
 3. Se tiver de ser HTTPS autoassinado: nunca `"url": "https://..."` no Cursor; nunca `npx`.
 4. Descobrir Node: `where node`. Usar path absoluto de **v22+** (`nodejs-lts` neste PC). **Não** usar `C:\Program Files\nodejs\node.exe` se for v12.
 5. Com esse Node: `npm install` na raiz (dependência `mcp-remote`). Entrypoint: `node_modules/mcp-remote/dist/proxy.js` (stdio → HTTP; o Cursor não faz o TLS).
 6. PEM: `dotnet dev-certs https -ep certs/localhost.pem --format Pem --no-password`. `mcp.json` `env.NODE_EXTRA_CA_CERTS` apontando para esse arquivo.
 7. `mcp.json` (projeto **e** `~/.cursor/mcp.json` se existir) `command` = node.exe v22; `args` = `[proxy.js, https://localhost:7071/mcp, 9999, --host, 127.0.0.1, --static-oauth-client-info, @.cursor/oauth-client-info.json]`.
 8. Developer: Reload Window. Authenticate → `/login` → `demo-user` → `hello_world`.
-9. Sintomas: **405** → `redirect_uri`/`client_id` não cadastrados; **-32000** → npx/Node velho instalando a URL; `fetch failed` → TLS do host Cursor (não usar `"url"` HTTPS local).
+9. Sintomas: **405** → `redirect_uri`/`client_id` não cadastrados; **-32000** → npx/Node velho instalando a URL; `fetch failed` → TLS do host Cursor (não usar `"url"` HTTPS local); `dyn-*` → falta Guid em `--static-oauth-client-info` (stdio) ou `auth.CLIENT_ID` (`url`).

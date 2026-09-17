@@ -15,7 +15,7 @@ public sealed class SpikeAuthOptions
 
     public string Issuer => PublicBaseUrl.TrimEnd('/');
     public string Resource => $"{Issuer}/mcp";
-    public string DemoClientId => Clients.Count > 0 ? Clients[0].ClientId : "cursor-mcp-spike";
+    public string DemoClientId => Clients.Count > 0 ? Clients[0].ClientId : "8f3a2c1b-6e4d-4a90-9c7e-1b2d3e4f5a60";
 }
 
 public sealed class RegisteredClientOptions

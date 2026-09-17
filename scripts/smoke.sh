@@ -6,7 +6,7 @@ BASE="${BASE_URL:-https://localhost:7071}"
 MCP="$BASE/mcp"
 PROTOCOL="2026-07-28"
 REDIRECT_URI="http://127.0.0.1:9999/callback"
-CLIENT_ID="cursor-mcp-spike"
+CLIENT_ID="8f3a2c1b-6e4d-4a90-9c7e-1b2d3e4f5a60"
 FAILED=0
 STARTED_SERVER=0
 SERVER_PID=""
@@ -127,6 +127,10 @@ UNKNOWN_TOKEN="$(curl -sk -X POST "$BASE/token" -H "Content-Type: application/x-
   --data-urlencode "redirect_uri=$REDIRECT_URI" \
   --data-urlencode "code_verifier=not-a-verifier")"
 echo "$UNKNOWN_TOKEN" | grep -q 'invalid_client' && pass "Unknown client_id on /token is rejected" || fail "Token unknown client: $UNKNOWN_TOKEN"
+NATIVE_REDIRECT="http://127.0.0.1:8787/callback"
+NATIVE_AUTH="$BASE/authorize?response_type=code&client_id=$(urlencode "$CLIENT_ID")&redirect_uri=$(urlencode "$NATIVE_REDIRECT")&state=x&code_challenge=$DUMMY_CHALLENGE&code_challenge_method=S256"
+NATIVE_LOGIN="$(curl -sk -D - -o /dev/null "$NATIVE_AUTH" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r' | tail -n1)"
+[[ "$NATIVE_LOGIN" == *"/login?ticket="* ]] && pass "GET /authorize with Cursor native :8787 -> /login" || fail "Native redirect: $NATIVE_LOGIN"
 
 log "401 challenge without bearer token"
 CHALLENGE_HEADERS="$(curl -sk -D - -o /tmp/mcp_unauth.json -X POST "$MCP" \
@@ -158,7 +162,7 @@ LOGIN_URL="$(echo "$AUTH_HEADERS" | awk 'tolower($1)=="location:"{print $2}' | t
 TICKET="${LOGIN_URL##*ticket=}"
 LOGIN_PAGE="$(curl -sk "$LOGIN_URL")"
 echo "$LOGIN_PAGE" | grep -q 'Entrar como demo-user' && pass "GET /login renders button" || fail "Login page missing button"
-echo "$LOGIN_PAGE" | grep -q 'cursor-mcp-spike' && pass "GET /login shows registered client_id" || fail "Login page missing client_id"
+echo "$LOGIN_PAGE" | grep -q "$CLIENT_ID" && pass "GET /login shows registered client_id" || fail "Login page missing client_id"
 
 LOGIN_HEADERS="$(curl -sk -D - -o /dev/null -X POST "$BASE/login" -H "Content-Type: application/x-www-form-urlencoded" --data-urlencode "ticket=$TICKET")"
 CALLBACK="$(echo "$LOGIN_HEADERS" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r' | tail -n1)"
@@ -184,14 +188,14 @@ REFRESH_TOKEN="$(json_get refresh_token "$TOKEN_JSON" 2>/dev/null || true)"
 [[ "${#ACCESS_TOKEN}" -gt 20 ]] && pass "JWT length" || fail "JWT missing: $TOKEN_JSON"
 [[ "${#REFRESH_TOKEN}" -gt 20 ]] && pass "POST /token issues refresh_token" || fail "Refresh missing: $TOKEN_JSON"
 if [[ "${#ACCESS_TOKEN}" -gt 20 ]]; then
-"$PYTHON" - "$ACCESS_TOKEN" <<'PY'
+"$PYTHON" - "$ACCESS_TOKEN" "$CLIENT_ID" <<'PY'
 import json, sys, base64
 token = sys.argv[1]
 payload = token.split(".")[1] + "=" * ((4 - len(token.split(".")[1]) % 4) % 4)
 data = json.loads(base64.urlsafe_b64decode(payload.encode()))
 assert data.get("sub") == "demo-user", data
 assert "mcp:tools" in data.get("scope", ""), data
-assert data.get("client_id") == "cursor-mcp-spike", data
+assert data.get("client_id") == sys.argv[2], data
 print("ok")
 PY
 pass "JWT claims include sub, client_id, and scope"

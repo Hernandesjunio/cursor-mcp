@@ -54,19 +54,23 @@ Loopback HTTP:
 {
   "mcpServers": {
     "cursor-mcp-spike": {
-      "url": "http://localhost:7071/mcp"
+      "url": "http://localhost:7071/mcp",
+      "auth": {
+        "CLIENT_ID": "8f3a2c1b-6e4d-4a90-9c7e-1b2d3e4f5a60",
+        "scopes": ["mcp:tools"]
+      }
     }
   }
 }
 ```
 
-HTTPS local autoassinado: Node 22 + `mcp-remote` (`dist/proxy.js`) + `NODE_EXTRA_CA_CERTS` — ver o doc. Produção com CA pública: `"url": "https://mcp.dominio/mcp"`.
+HTTPS local autoassinado: Node 22 + `mcp-remote` (`dist/proxy.js`) + `NODE_EXTRA_CA_CERTS` — ver o doc. Produção com CA pública: `"url": "https://mcp.dominio/mcp"` + `auth.CLIENT_ID` (Guid).
 
 Depois de alterar o `mcp.json`, recarregue a **janela** do Cursor. Authenticate → `/login` → **Entrar como demo-user**. Confirme `hello_world` e `hello://world`.
 
 Chamadas JSON-RPC manuais para `2026-07-28` precisam dos headers `MCP-Protocol-Version` e `Mcp-Method` (e `Mcp-Name` em `tools/call` / `resources/read`). O Cursor envia isso automaticamente.
 
-O `401` do MCP só anuncia `resource_metadata`. O `client_id` chega no `GET /authorize` e precisa existir em `SpikeAuth:Clients`, com `redirect_uri` cadastrado para essa aplicação (loopback ignora a porta, como apps nativas no Entra/B2C). Não há Dynamic Client Registration: este spike simula um app B2C já registrado, não um AS que emite `client_id` sob demanda.
+O `401` do MCP só anuncia `resource_metadata`. O `client_id` (Application ID Guid `8f3a2c1b-6e4d-4a90-9c7e-1b2d3e4f5a60`) vem da **conexão** (`auth.CLIENT_ID` em `"url"`, ou `--static-oauth-client-info` no `mcp-remote`), não do resource metadata. Precisa existir em `SpikeAuth:Clients`, com `redirect_uri` cadastrado (loopback ignora a porta, como apps nativas no Entra/B2C). O nome do server MCP `cursor-mcp-spike` não é o `client_id`. Não há Dynamic Client Registration.
 
 ## Fluxo OAuth
 
@@ -75,7 +79,7 @@ Cursor → POST /mcp (sem Bearer)
 Server → 401 WWW-Authenticate resource_metadata=...
 Cursor → GET /.well-known/oauth-protected-resource
 Cursor → GET /.well-known/oauth-authorization-server
-Cursor → GET /authorize?client_id=cursor-mcp-spike&response_type=code&code_challenge=...&redirect_uri=...
+Cursor → GET /authorize?client_id=8f3a2c1b-6e4d-4a90-9c7e-1b2d3e4f5a60&response_type=code&code_challenge=...&redirect_uri=...
 Server → 302 /login?ticket=...
 User   → POST /login (botão)
 Server → 302 callback?code=...&state=...
