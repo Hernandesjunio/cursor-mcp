@@ -80,8 +80,10 @@ Server → 302 /login?ticket=...
 User   → POST /login (botão)
 Server → 302 callback?code=...&state=...
 Cursor → POST /token (code + code_verifier)
-Server → access_token JWT
+Server → access_token JWT (15 min) + refresh_token
 Cursor → POST /mcp Authorization: Bearer ...
+Cursor → POST /token (grant_type=refresh_token) quando o access expira
+Server → novo access_token + refresh_token rotacionado
 ```
 
 ## Contratos
@@ -89,8 +91,9 @@ Cursor → POST /mcp Authorization: Bearer ...
 - `POST /mcp` exige JWT HS256 com `iss=https://localhost:7071`, `aud=https://localhost:7071/mcp` (ou o origin) e `scope=mcp:tools`.
 - `GET /authorize` exige `client_id` pré-registrado, `redirect_uri` da aplicação, `response_type=code` e PKCE `S256`.
 - `POST /login` consome o ticket de uso único e redireciona ao `redirect_uri` do cliente.
-- `POST /token` valida `client_id` pré-registrado, code de uso único, expiração, redirect URI e PKCE.
-- JWT de demonstração dura 15 minutos. Authorization code dura 5 minutos.
+- `POST /token` valida `client_id` pré-registrado, code de uso único, expiração, redirect URI e PKCE `S256`, e devolve JWT + `refresh_token`.
+- `grant_type=refresh_token` emite um novo access token e rotaciona o refresh (reuse do antigo → `invalid_grant` e revoga a família).
+- JWT de demonstração dura 15 minutos. Refresh token dura 7 dias. Authorization code dura 5 minutos.
 
 ## Smoke tests
 
@@ -98,7 +101,7 @@ Cursor → POST /mcp Authorization: Bearer ...
 bash scripts/smoke.sh
 ```
 
-O script sobe o servidor se `/health` não responder e valida health, Scalar, discovery, clientes pré-registrados, challenge 401, fluxo PKCE/login/token, chamadas MCP autenticadas e os casos negativos (cliente desconhecido, redirect URI inválida, code reutilizado, PKCE inválido, JWT expirado/inválido).
+O script sobe o servidor se `/health` não responder e valida health, Scalar, discovery, clientes pré-registrados, challenge 401, fluxo PKCE/login/token, refresh token com rotação, chamadas MCP autenticadas e os casos negativos (cliente desconhecido, redirect URI inválida, code reutilizado, PKCE inválido, JWT expirado/inválido).
 
 ## Checklist de validação
 
@@ -108,14 +111,14 @@ O script sobe o servidor se `/health` não responder e valida health, Scalar, di
 - [ ] `/health` retorna `{ "status": "ok" }`
 - [ ] `/scalar` abre e lista health/OAuth
 - [ ] `/.well-known/oauth-protected-resource` contém `resource` e `authorization_servers`
-- [ ] `/.well-known/oauth-authorization-server` contém `authorization_endpoint`, `token_endpoint` e `code_challenge_methods_supported: ["S256"]`, sem `registration_endpoint`
+- [ ] `/.well-known/oauth-authorization-server` contém `authorization_endpoint`, `token_endpoint`, `grant_types_supported` com `refresh_token` e `code_challenge_methods_supported: ["S256"]`, sem `registration_endpoint`
 - [ ] `POST /mcp` sem token → `401`
 - [ ] Header `WWW-Authenticate` contém `Bearer` e `resource_metadata="https://localhost:7071/.well-known/oauth-protected-resource"`
 - [ ] `client_id` desconhecido em `/authorize` → `unauthorized_client`
 - [ ] `redirect_uri` não cadastrado → `invalid_request`
 - [ ] `/authorize` com cliente registrado redireciona para `/login`
 - [ ] Botão de login gera callback com `code` e `state`
-- [ ] `/token` devolve JWT Bearer
+- [ ] `/token` devolve JWT Bearer e `refresh_token`
 - [ ] JWT contém `sub=demo-user` e `scope=mcp:tools`
 - [ ] `tools/list` mostra `hello_world`
 - [ ] `tools/call` de `hello_world` retorna `Hello, world!`
@@ -123,12 +126,14 @@ O script sobe o servidor se `/health` não responder e valida health, Scalar, di
 - [ ] `resources/read` de `hello://world` retorna `Hello, world!`
 - [ ] Code OAuth reutilizado → `invalid_grant`
 - [ ] `code_verifier` errado → `invalid_grant`
+- [ ] Refresh token válido emite novo access e rotaciona o refresh
+- [ ] Refresh token reutilizado → `invalid_grant`
 - [ ] JWT expirado ou inválido → `401`
 - [ ] Cursor completa o login e passa a listar a tool/resource (playbook: [docs/cursor-conectividade.md](docs/cursor-conectividade.md))
 
 ## Limitações do spike
 
-- Sem banco, refresh token, consentimento real ou rotação de chaves
+- Sem banco, consentimento real ou rotação de chaves
 - HMAC compartilhado em `appsettings.json`
 - Clientes e redirect URIs vêm de configuração em memória; não há Dynamic Client Registration
 - Sem suíte de testes de unidade; a garantia é o smoke HTTP/MCP

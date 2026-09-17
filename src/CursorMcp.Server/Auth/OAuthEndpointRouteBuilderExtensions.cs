@@ -38,7 +38,7 @@ public static class OAuthEndpointRouteBuilderExtensions
 
         oauth.MapPost("/token", IssueToken)
             .WithName("Token")
-            .WithSummary("Exchanges an authorization code for a JWT access token.")
+            .WithSummary("Exchanges an authorization code or refresh token for a JWT access token.")
             .Accepts<Dictionary<string, string>>("application/x-www-form-urlencoded")
             .Produces<TokenResponse>(StatusCodes.Status200OK)
             .Produces<OAuthErrorResponse>(StatusCodes.Status400BadRequest)
@@ -65,7 +65,7 @@ public static class OAuthEndpointRouteBuilderExtensions
             authorization_endpoint = $"{issuer}/authorize",
             token_endpoint = $"{issuer}/token",
             response_types_supported = new[] { "code" },
-            grant_types_supported = new[] { "authorization_code" },
+            grant_types_supported = new[] { "authorization_code", "refresh_token" },
             code_challenge_methods_supported = new[] { "S256" },
             token_endpoint_auth_methods_supported = new[] { "none", "client_secret_post" },
             scopes_supported = new[] { optionsAccessor.Value.Scope },
@@ -217,11 +217,26 @@ public static class OAuthEndpointRouteBuilderExtensions
             }, statusCode: StatusCodes.Status401Unauthorized);
         }
 
-        if (!string.Equals(grantType, "authorization_code", StringComparison.Ordinal))
+        if (string.Equals(grantType, "authorization_code", StringComparison.Ordinal))
         {
-            return OAuthError("unsupported_grant_type", "Only authorization_code is supported.");
+            return ExchangeAuthorizationCode(form, client, store, issuer, options);
         }
 
+        if (string.Equals(grantType, "refresh_token", StringComparison.Ordinal))
+        {
+            return RotateRefreshToken(form, client, store, issuer, options);
+        }
+
+        return OAuthError("unsupported_grant_type", "Only authorization_code and refresh_token are supported.");
+    }
+
+    private static IResult ExchangeAuthorizationCode(
+        IFormCollection form,
+        OAuthClient client,
+        OAuthStore store,
+        JwtTokenIssuer issuer,
+        SpikeAuthOptions options)
+    {
         var code = form["code"].ToString();
         var redirectUri = form["redirect_uri"].ToString();
         var codeVerifier = form["code_verifier"].ToString();
@@ -257,19 +272,75 @@ public static class OAuthEndpointRouteBuilderExtensions
         AgentDebugLog.Write("C", "OAuth:IssueToken", "Token issued", new
         {
             clientId = client.ClientId,
-            grantType,
+            grantType = "authorization_code",
             audience,
             scope = codeInfo.Scope,
             hasCode = !string.IsNullOrEmpty(code),
             hasVerifier = !string.IsNullOrEmpty(codeVerifier)
         });
         // #endregion
-        var (token, expiresIn) = issuer.Issue(client.ClientId, audience, codeInfo.Scope);
+        return BuildTokenResponse(issuer, store, client.ClientId, audience, codeInfo.Scope);
+    }
+
+    private static IResult RotateRefreshToken(
+        IFormCollection form,
+        OAuthClient client,
+        OAuthStore store,
+        JwtTokenIssuer issuer,
+        SpikeAuthOptions options)
+    {
+        var refreshToken = form["refresh_token"].ToString();
+        var resource = form["resource"].ToString();
+
+        if (string.IsNullOrEmpty(refreshToken) || !store.TryTakeRefreshToken(refreshToken, out var refreshInfo))
+        {
+            return OAuthError("invalid_grant", "Invalid refresh token.");
+        }
+
+        if (!string.Equals(refreshInfo.ClientId, client.ClientId, StringComparison.Ordinal))
+        {
+            return OAuthError("invalid_grant", "Refresh token was not issued to this client.");
+        }
+
+        string audience;
+        if (string.IsNullOrEmpty(resource))
+        {
+            audience = refreshInfo.Audience;
+        }
+        else if (!TryNormalizeResource(resource, options, out audience) ||
+                 !string.Equals(audience, refreshInfo.Audience, StringComparison.OrdinalIgnoreCase))
+        {
+            return OAuthError("invalid_target", "The specified resource is not valid.");
+        }
+
+        // #region agent log
+        AgentDebugLog.Write("C", "OAuth:IssueToken", "Refresh token rotated", new
+        {
+            clientId = client.ClientId,
+            grantType = "refresh_token",
+            audience,
+            scope = refreshInfo.Scope
+        });
+        // #endregion
+        return BuildTokenResponse(issuer, store, client.ClientId, audience, refreshInfo.Scope, refreshInfo.FamilyId);
+    }
+
+    private static IResult BuildTokenResponse(
+        JwtTokenIssuer issuer,
+        OAuthStore store,
+        string clientId,
+        string audience,
+        string scope,
+        string? familyId = null)
+    {
+        var (token, expiresIn) = issuer.Issue(clientId, audience, scope);
+        var refresh = store.CreateRefreshToken(clientId, audience, scope, familyId);
         return Results.Json(new TokenResponse
         {
             AccessToken = token,
             ExpiresIn = expiresIn,
-            Scope = codeInfo.Scope
+            Scope = scope,
+            RefreshToken = refresh
         });
     }
 

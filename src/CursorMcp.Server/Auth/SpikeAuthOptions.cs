@@ -8,6 +8,7 @@ public sealed class SpikeAuthOptions
     public string SigningKey { get; set; } = "spike-demo-hmac-key-32-bytes-min!!";
     public int AccessTokenMinutes { get; set; } = 15;
     public int AuthorizationCodeMinutes { get; set; } = 5;
+    public int RefreshTokenDays { get; set; } = 7;
     public string Scope { get; set; } = "mcp:tools";
     public string DemoUser { get; set; } = "demo-user";
     public List<RegisteredClientOptions> Clients { get; set; } = [];

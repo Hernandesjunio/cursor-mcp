@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
 
@@ -9,6 +10,8 @@ public sealed class OAuthStore
     private readonly ConcurrentDictionary<string, OAuthClient> _clients = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, LoginTicket> _tickets = new(StringComparer.Ordinal);
     private readonly ConcurrentDictionary<string, AuthorizationCode> _codes = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, RefreshToken> _refreshTokens = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, string> _consumedRefreshTokens = new(StringComparer.Ordinal);
     private readonly SpikeAuthOptions _options;
 
     public OAuthStore(IOptions<SpikeAuthOptions> options)
@@ -94,5 +97,53 @@ public sealed class OAuthStore
 
         value = null!;
         return false;
+    }
+
+    public string CreateRefreshToken(string clientId, string audience, string scope, string? familyId = null)
+    {
+        var token = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
+        _refreshTokens[token] = new RefreshToken
+        {
+            Token = token,
+            FamilyId = string.IsNullOrWhiteSpace(familyId) ? Guid.NewGuid().ToString("N") : familyId,
+            ClientId = clientId,
+            Audience = audience,
+            Scope = scope,
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(_options.RefreshTokenDays)
+        };
+        return token;
+    }
+
+    public bool TryTakeRefreshToken(string token, out RefreshToken value)
+    {
+        if (_consumedRefreshTokens.TryGetValue(token, out var familyId))
+        {
+            RevokeFamily(familyId);
+            value = null!;
+            return false;
+        }
+
+        if (_refreshTokens.TryRemove(token, out value!))
+        {
+            _consumedRefreshTokens[token] = value.FamilyId;
+            if (value.ExpiresAt >= DateTimeOffset.UtcNow)
+            {
+                return true;
+            }
+        }
+
+        value = null!;
+        return false;
+    }
+
+    private void RevokeFamily(string familyId)
+    {
+        foreach (var pair in _refreshTokens)
+        {
+            if (string.Equals(pair.Value.FamilyId, familyId, StringComparison.Ordinal))
+            {
+                _refreshTokens.TryRemove(pair.Key, out _);
+            }
+        }
     }
 }

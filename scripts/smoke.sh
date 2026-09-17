@@ -111,7 +111,7 @@ log "OAuth discovery"
 PRM="$(curl -sk "$BASE/.well-known/oauth-protected-resource")"
 echo "$PRM" | grep -q 'authorization_servers' && echo "$PRM" | grep -q "$MCP" && pass "Protected resource metadata" || fail "PRM: $PRM"
 ASM="$(curl -sk "$BASE/.well-known/oauth-authorization-server")"
-echo "$ASM" | grep -F -q '"code_challenge_methods_supported":["S256"]' && echo "$ASM" | grep -F -q '"authorization_endpoint"' && pass "Authorization server metadata" || fail "AS metadata: $ASM"
+echo "$ASM" | grep -F -q '"code_challenge_methods_supported":["S256"]' && echo "$ASM" | grep -F -q '"authorization_endpoint"' && echo "$ASM" | grep -F -q '"refresh_token"' && pass "Authorization server metadata" || fail "AS metadata: $ASM"
 echo "$ASM" | grep -q '"registration_endpoint"' && fail "Metadata should not advertise DCR" || pass "Metadata omits registration_endpoint"
 
 log "Pre-registered client validation"
@@ -180,7 +180,9 @@ TOKEN_JSON="$(curl -sk -X POST "$BASE/token" -H "Content-Type: application/x-www
   --data-urlencode "resource=$MCP")"
 echo "$TOKEN_JSON" | grep -F -q '"token_type":"Bearer"' && pass "POST /token issues JWT" || fail "Token response: $TOKEN_JSON"
 ACCESS_TOKEN="$(json_get access_token "$TOKEN_JSON" 2>/dev/null || true)"
+REFRESH_TOKEN="$(json_get refresh_token "$TOKEN_JSON" 2>/dev/null || true)"
 [[ "${#ACCESS_TOKEN}" -gt 20 ]] && pass "JWT length" || fail "JWT missing: $TOKEN_JSON"
+[[ "${#REFRESH_TOKEN}" -gt 20 ]] && pass "POST /token issues refresh_token" || fail "Refresh missing: $TOKEN_JSON"
 if [[ "${#ACCESS_TOKEN}" -gt 20 ]]; then
 "$PYTHON" - "$ACCESS_TOKEN" <<'PY'
 import json, sys, base64
@@ -222,6 +224,30 @@ echo "$RESOURCES" | grep -q 'hello://world' && pass "resources/list contains hel
 
 READ="$(mcp_call "resources/read" ",\"uri\":\"hello://world\"" "hello://world")"
 echo "$READ" | grep -q 'Hello, world!' && pass "resources/read hello://world" || fail "resources/read: $READ"
+
+log "Refresh token rotation"
+REFRESH_JSON="$(curl -sk -X POST "$BASE/token" -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "grant_type=refresh_token" \
+  --data-urlencode "refresh_token=$REFRESH_TOKEN" \
+  --data-urlencode "client_id=$CLIENT_ID" \
+  --data-urlencode "resource=$MCP")"
+echo "$REFRESH_JSON" | grep -F -q '"token_type":"Bearer"' && pass "POST /token refresh_token issues JWT" || fail "Refresh response: $REFRESH_JSON"
+ROTATED_ACCESS="$(json_get access_token "$REFRESH_JSON" 2>/dev/null || true)"
+ROTATED_REFRESH="$(json_get refresh_token "$REFRESH_JSON" 2>/dev/null || true)"
+[[ "${#ROTATED_ACCESS}" -gt 20 ]] && [[ "$ROTATED_ACCESS" != "$ACCESS_TOKEN" ]] && pass "Refresh issues a new access token" || fail "Rotated access missing: $REFRESH_JSON"
+[[ "${#ROTATED_REFRESH}" -gt 20 ]] && [[ "$ROTATED_REFRESH" != "$REFRESH_TOKEN" ]] && pass "Refresh token is rotated" || fail "Rotated refresh missing: $REFRESH_JSON"
+
+REUSE_REFRESH="$(curl -sk -X POST "$BASE/token" -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "grant_type=refresh_token" \
+  --data-urlencode "refresh_token=$REFRESH_TOKEN" \
+  --data-urlencode "client_id=$CLIENT_ID")"
+echo "$REUSE_REFRESH" | grep -q 'invalid_grant' && pass "Reused refresh token is rejected" || fail "Reused refresh: $REUSE_REFRESH"
+
+REVOKED_FAMILY="$(curl -sk -X POST "$BASE/token" -H "Content-Type: application/x-www-form-urlencoded" \
+  --data-urlencode "grant_type=refresh_token" \
+  --data-urlencode "refresh_token=$ROTATED_REFRESH" \
+  --data-urlencode "client_id=$CLIENT_ID")"
+echo "$REVOKED_FAMILY" | grep -q 'invalid_grant' && pass "Refresh family is revoked after reuse" || fail "Family after reuse: $REVOKED_FAMILY"
 
 log "Negative cases"
 REUSE="$(curl -sk -X POST "$BASE/token" -H "Content-Type: application/x-www-form-urlencoded" \

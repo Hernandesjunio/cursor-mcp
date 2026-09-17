@@ -69,6 +69,16 @@ public sealed class AuthorizationCode
     public DateTimeOffset ExpiresAt { get; init; }
 }
 
+public sealed class RefreshToken
+{
+    public required string Token { get; init; }
+    public required string FamilyId { get; init; }
+    public required string ClientId { get; init; }
+    public required string Audience { get; init; }
+    public required string Scope { get; init; }
+    public DateTimeOffset ExpiresAt { get; init; }
+}
+
 public sealed class TokenResponse
 {
     [JsonPropertyName("access_token")]
@@ -82,6 +92,10 @@ public sealed class TokenResponse
 
     [JsonPropertyName("scope")]
     public string? Scope { get; init; }
+
+    [JsonPropertyName("refresh_token")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? RefreshToken { get; init; }
 }
 
 public sealed class OAuthErrorResponse
