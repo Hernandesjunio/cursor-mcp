@@ -1,0 +1,10 @@
+{
+  "name": "mcp-http-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Vendored stdio → Streamable HTTP MCP bridge (mcp-remote + JSON config).",
+  "scripts": {
+    "build": "node build.mjs",
+    "start": "node dist/mcp-http-bridge.js --config config.example.json"
+  }
+}

@@ -4,12 +4,16 @@
   "description": "Servidor MCP HTTP **stateless** (`2026-07-28`) em **.NET 10**, servido em `https://localhost:7071`, com login local, challenge `WWW-Authenticate` e JWT.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "build:bridge": "node tools/mcp-http-bridge/build.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
     "mcp-remote": "^0.14.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

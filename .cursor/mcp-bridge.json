@@ -1,0 +1,11 @@
+{
+  "mcpUrl": "https://localhost:7071/mcp",
+  "callbackPort": 8787,
+  "callbackPath": "/callback",
+  "host": "localhost",
+  "staticOAuthClientInfo": {
+    "client_id": "8f3a2c1b-6e4d-4a90-9c7e-1b2d3e4f5a60"
+  },
+  "allowHttp": false,
+  "debug": false
+}
